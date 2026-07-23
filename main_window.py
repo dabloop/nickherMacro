@@ -126,13 +126,13 @@ QLabel#toastErr  { background:#3d1010; color:#ff9090; border:1px solid #6d2020; 
 QPushButton#bindBtn {
     background:#1e1e30; color:#c8c8ff;
     border:1px solid #4a4a7a; border-radius:7px;
-    padding:8px 14px; font-size:13px; font-weight:bold; min-height:20px;
+    padding:6px 12px; font-size:12px; font-weight:bold;
 }
 QPushButton#bindBtn:hover { background:#252545; border-color:#5b5bff; }
 QPushButton#bindBtnActive {
     background:#2a2a50; color:#ffffff;
     border:2px solid #5b5bff; border-radius:7px;
-    padding:8px 14px; font-size:13px; font-weight:bold; min-height:20px;
+    padding:6px 12px; font-size:12px; font-weight:bold;
 }
 
 QSpinBox, QDoubleSpinBox {
@@ -824,16 +824,15 @@ class MainWindow(QMainWindow):
         hk.setSpacing(12)
         hk.addWidget(_sec("Hotkeys"))
 
-        form = self._form()
-
-        def _bind_row(label, default, saved, hint):
+        def _bind_cell(label, default, saved, hint):
+            """A compact 'label above key' unit, sized to sit inline with others."""
             reset = QPushButton("↺")
             reset.setObjectName("resetBtn")
-            reset.setFixedSize(24, 24)
+            reset.setFixedSize(22, 22)
             reset.setCursor(QCursor(Qt.PointingHandCursor))
             reset.setToolTip("Reset to default")
             b = BindButton(saved)
-            b.setFixedWidth(130)
+            b.setFixedWidth(104)
             b.setToolTip(hint)
             reset.setVisible(saved != default)
 
@@ -850,26 +849,34 @@ class MainWindow(QMainWindow):
             # lambda with no args — QPushButton.clicked passes a bool we ignore
             reset.clicked.connect(lambda _checked=False, f=_on_reset: f())
 
-            field = QWidget()
-            fl = QHBoxLayout(field)
-            fl.setContentsMargins(0, 0, 0, 0)
-            fl.setSpacing(4)
-            fl.addWidget(b)
-            fl.addWidget(reset)
-            fl.addStretch()
-            form.addRow(_lbl(label, "info"), field)
-            return b
+            cell = QVBoxLayout()
+            cell.setSpacing(5)
+            cell.addWidget(_lbl(label, "info"))
+            controls = QHBoxLayout()
+            controls.setSpacing(4)
+            controls.addWidget(b)
+            controls.addWidget(reset)
+            controls.addStretch()
+            cell.addLayout(controls)
+            return cell, b
 
-        self._record_bind = _bind_row(
-            "Record toggle", DEFAULT_RECORD_KEY, self._saved_record_key,
+        rec_cell, self._record_bind = _bind_cell(
+            "Record", DEFAULT_RECORD_KEY, self._saved_record_key,
             "Starts and stops recording")
-        self._loop_bind = _bind_row(
-            "Loop toggle", DEFAULT_LOOP_KEY, self._saved_loop_key,
+        loop_cell, self._loop_bind = _bind_cell(
+            "Loop", DEFAULT_LOOP_KEY, self._saved_loop_key,
             "Starts and stops playback")
-        self._panic_bind = _bind_row(
-            "Panic stop", DEFAULT_PANIC_KEY, self._saved_panic_key,
+        panic_cell, self._panic_bind = _bind_cell(
+            "Panic", DEFAULT_PANIC_KEY, self._saved_panic_key,
             "Halts recording and playback instantly")
-        hk.addLayout(form)
+
+        line = QHBoxLayout()
+        line.setSpacing(22)
+        for cell in (rec_cell, loop_cell, panic_cell):
+            line.addLayout(cell)
+        line.addStretch()
+        hk.addLayout(line)
+
         hk.addWidget(_lbl(
             "Hotkeys work while other windows are focused. "
             "Clicks on this window are never recorded.", "hint"))
@@ -1237,7 +1244,7 @@ class MainWindow(QMainWindow):
             self._preset_list.setItem(row, 1, count)
 
             self._preset_list.setCellWidget(row, 2, self._hotkey_cell(name))
-            self._preset_list.setRowHeight(row, 46)
+            self._preset_list.setRowHeight(row, 42)
 
             if name == keep:
                 self._preset_list.selectRow(row)
@@ -1250,12 +1257,12 @@ class MainWindow(QMainWindow):
         row.setSpacing(4)
 
         bind = BindButton(self._preset_keys.get(name, ""))
-        bind.setFixedWidth(132)
+        bind.setFixedWidth(116)
         bind.setToolTip(f"Press this key anywhere to run “{name}”")
 
         clear = QPushButton("✕")
         clear.setObjectName("resetBtn")
-        clear.setFixedSize(26, 26)
+        clear.setFixedSize(24, 24)
         clear.setCursor(QCursor(Qt.PointingHandCursor))
         clear.setToolTip("Remove this hotkey")
         clear.setVisible(bool(self._preset_keys.get(name)))
