@@ -595,14 +595,22 @@ class MainWindow(QMainWindow):
             if hotkeys.normalize(key)
         }
 
+        # Remember the version we ran last time, to confirm an update landed.
+        self._prev_version = str(s.get("last_version", __version__))
+
         self._build_ui()
         self._restore_prefs(s)
         QApplication.instance().focusChanged.connect(self._on_focus_changed)
         self._build_tray()
         self._start_global_listener()
         self._refresh_presets()
+        self._save_prefs()   # record the current version as "last seen"
 
         updater.cleanup_old_binary()
+        if updater.is_newer(__version__, self._prev_version):
+            QTimer.singleShot(
+                600, lambda: self._toast.show_msg(
+                    f"✅  Updated to v{__version__}", "toastDone", ms=4000))
         if self._chk_autoupdate.isChecked() and updater.GITHUB_REPO:
             QTimer.singleShot(2500, lambda: self._check_updates(quiet=True))
 
@@ -1061,6 +1069,7 @@ class MainWindow(QMainWindow):
             "tray":          self._chk_tray.isChecked(),
             "auto_update_check": self._chk_autoupdate.isChecked(),
             "preset_keys":   dict(self._preset_keys),
+            "last_version":  __version__,
         })
 
     # ── chrome ───────────────────────────────────────────────────────────────
