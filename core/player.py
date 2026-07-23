@@ -187,21 +187,21 @@ class Player:
 
             elif t == ev.MOUSE_DOWN:
                 name = event.get("button", "left")
-                self._mouse.position = (event["x"], event["y"])
+                self._goto(event)
                 self._mouse.press(ev.decode_button(name))
                 self._held_buttons.add(name)
 
             elif t == ev.MOUSE_UP:
                 name = event.get("button", "left")
-                self._mouse.position = (event["x"], event["y"])
+                self._goto(event)
                 self._mouse.release(ev.decode_button(name))
                 self._held_buttons.discard(name)
 
             elif t == ev.MOUSE_MOVE:
-                self._mouse.position = (event["x"], event["y"])
+                self._goto(event)
 
             elif t == ev.SCROLL:
-                self._mouse.position = (event["x"], event["y"])
+                self._goto(event)
                 self._mouse.scroll(event.get("dx", 0), event.get("dy", 0))
 
             elif t == ev.DELAY:
@@ -214,3 +214,11 @@ class Player:
             self._report(exc)
         except Exception as exc:
             self._report(exc)
+
+    def _goto(self, event):
+        """Move the pointer for events that carry a position; leave it otherwise.
+
+        A positionless click fires wherever the user has the pointer right now.
+        """
+        if ev.has_position(event):
+            self._mouse.position = (event["x"], event["y"])

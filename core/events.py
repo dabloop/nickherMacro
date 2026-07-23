@@ -130,21 +130,39 @@ def key_event(down: bool, key, at: float) -> dict:
     return {"t": KEY_DOWN if down else KEY_UP, "key": encode_key(key), "at": at}
 
 
-def mouse_event(down: bool, button, x: int, y: int, at: float) -> dict:
-    return {
-        "t": MOUSE_DOWN if down else MOUSE_UP,
-        "button": encode_button(button),
-        "x": int(x), "y": int(y), "at": at,
-    }
+def mouse_event(down: bool, button, x, y, at: float) -> dict:
+    """x/y may be None: a click with no position fires wherever the pointer is."""
+    event = {"t": MOUSE_DOWN if down else MOUSE_UP,
+             "button": encode_button(button), "at": at}
+    event.update(_position(x, y))
+    return event
 
 
 def move_event(x: int, y: int, at: float) -> dict:
     return {"t": MOUSE_MOVE, "x": int(x), "y": int(y), "at": at}
 
 
-def scroll_event(x: int, y: int, dx: int, dy: int, at: float) -> dict:
-    return {"t": SCROLL, "x": int(x), "y": int(y),
-            "dx": int(dx), "dy": int(dy), "at": at}
+def scroll_event(x, y, dx: int, dy: int, at: float) -> dict:
+    """x/y may be None — see mouse_event."""
+    event = {"t": SCROLL, "dx": int(dx), "dy": int(dy), "at": at}
+    event.update(_position(x, y))
+    return event
+
+
+def _position(x, y) -> dict:
+    """Coordinate pair for an event, or nothing at all when it has no position.
+
+    Leaving the keys off entirely (rather than storing None) is what keeps the
+    "click here, wherever here is" meaning intact through save/load.
+    """
+    if x is None or y is None:
+        return {}
+    return {"x": int(x), "y": int(y)}
+
+
+def has_position(event: dict) -> bool:
+    """True if this event should move the pointer before it fires."""
+    return event.get("x") is not None and event.get("y") is not None
 
 
 def delay_event(ms: int) -> dict:
@@ -296,7 +314,9 @@ def pretty_event(event: dict) -> str:
         return pretty_key(event.get("key", ""))
     if t in (MOUSE_DOWN, MOUSE_UP):
         btn = pretty_button(event.get("button", "left"))
-        return f"{btn} Click ({event.get('x', 0)}, {event.get('y', 0)})"
+        if not has_position(event):
+            return f"{btn} Click"      # fires wherever the pointer already is
+        return f"{btn} Click ({event['x']}, {event['y']})"
     if t == MOUSE_MOVE:
         return f"Move ({event.get('x', 0)}, {event.get('y', 0)})"
     if t == SCROLL:

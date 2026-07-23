@@ -89,6 +89,8 @@ class Recorder:
         self._strip_stop_key()
         self._strip_trailing_window_click()
         self._strip_dangling_click()
+        # Last: the passes above need to know where each click landed.
+        self._strip_click_positions()
 
     # ── internals ────────────────────────────────────────────────────────────
     def _elapsed(self) -> float:
@@ -175,6 +177,23 @@ class Recorder:
             elif last["t"] == ev.MOUSE_DOWN and self._in_ignored_rect(
                     last.get("x", -1 << 30), last.get("y", -1 << 30)):
                 self.events.pop()
+
+    def _strip_click_positions(self):
+        """Turn clicks and scrolls into plain "click here" events.
+
+        Where the pointer happened to be only belongs in the recording when
+        movement is being recorded too. Otherwise every replay warps the
+        pointer back to the spot it was recorded at, which is the opposite of
+        what "just spam clicks where I'm pointing" means. Positions are kept
+        until now because the cleanup passes above locate clicks by position.
+        """
+        if self.record_moves:
+            return
+        with self._lock:
+            for event in self.events:
+                if event.get("t") in (ev.MOUSE_DOWN, ev.MOUSE_UP, ev.SCROLL):
+                    event.pop("x", None)
+                    event.pop("y", None)
 
     def _in_ignored_rect(self, x, y) -> bool:
         for rx, ry, rw, rh in self.ignore_rects:
