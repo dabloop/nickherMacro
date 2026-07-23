@@ -124,15 +124,15 @@ QLabel#toastDone { background:#103d10; color:#8affa0; border:1px solid #205d20; 
 QLabel#toastErr  { background:#3d1010; color:#ff9090; border:1px solid #6d2020; border-radius:8px; padding:7px 16px; font-size:12px; font-weight:bold; }
 
 QPushButton#bindBtn {
-    background:#1e1e30; color:#aaaaee;
-    border:1px solid #3a3a60; border-radius:7px;
-    padding:6px 14px; font-size:12px; font-weight:bold;
+    background:#1e1e30; color:#c8c8ff;
+    border:1px solid #4a4a7a; border-radius:7px;
+    padding:8px 14px; font-size:13px; font-weight:bold; min-height:20px;
 }
 QPushButton#bindBtn:hover { background:#252545; border-color:#5b5bff; }
 QPushButton#bindBtnActive {
     background:#2a2a50; color:#ffffff;
     border:2px solid #5b5bff; border-radius:7px;
-    padding:6px 14px; font-size:12px; font-weight:bold;
+    padding:8px 14px; font-size:13px; font-weight:bold; min-height:20px;
 }
 
 QSpinBox, QDoubleSpinBox {
@@ -791,7 +791,7 @@ class MainWindow(QMainWindow):
         head.setSectionResizeMode(1, QHeaderView.Fixed)
         head.setSectionResizeMode(2, QHeaderView.Fixed)
         self._preset_list.setColumnWidth(1, 76)
-        self._preset_list.setColumnWidth(2, 176)
+        self._preset_list.setColumnWidth(2, 210)
         pc.addWidget(self._preset_list, 1)
 
         row = QHBoxLayout(); row.setSpacing(8)
@@ -1237,7 +1237,7 @@ class MainWindow(QMainWindow):
             self._preset_list.setItem(row, 1, count)
 
             self._preset_list.setCellWidget(row, 2, self._hotkey_cell(name))
-            self._preset_list.setRowHeight(row, 38)
+            self._preset_list.setRowHeight(row, 46)
 
             if name == keep:
                 self._preset_list.selectRow(row)
@@ -1250,12 +1250,12 @@ class MainWindow(QMainWindow):
         row.setSpacing(4)
 
         bind = BindButton(self._preset_keys.get(name, ""))
-        bind.setFixedWidth(110)
+        bind.setFixedWidth(132)
         bind.setToolTip(f"Press this key anywhere to run “{name}”")
 
         clear = QPushButton("✕")
         clear.setObjectName("resetBtn")
-        clear.setFixedSize(22, 22)
+        clear.setFixedSize(26, 26)
         clear.setCursor(QCursor(Qt.PointingHandCursor))
         clear.setToolTip("Remove this hotkey")
         clear.setVisible(bool(self._preset_keys.get(name)))
