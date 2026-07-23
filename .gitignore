@@ -1,0 +1,17 @@
+# Build output
+build/
+dist/
+build_lean/
+dist_lean/
+*.pyc
+__pycache__/
+
+# Per-user data — these are created at runtime and are not source
+settings.json
+presets.json
+
+# Editors / OS
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini
