@@ -53,19 +53,22 @@ a = Analysis(
 )
 pyz = PYZ(a.pure)
 
+# One-FOLDER build (onedir), not one-file. A one-file exe unpacks its bundled
+# DLLs into a temp dir every launch; if antivirus locks one mid-unpack you get
+# "failed to load Python DLL". onedir ships the DLLs beside the exe (in
+# _internal/), so nothing is extracted at runtime and that error can't happen.
+# It also starts faster. The installer packages the whole folder.
 exe = EXE(
     pyz,
     a.scripts,
-    a.binaries,
-    a.datas,
     [],
+    exclude_binaries=True,          # binaries go into COLLECT, not the exe
     name='NickherMacro',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
     upx=True,
     upx_exclude=[],
-    runtime_tmpdir=None,
     console=False,
     disable_windowed_traceback=False,
     argv_emulation=False,
@@ -73,4 +76,14 @@ exe = EXE(
     codesign_identity=None,
     entitlements_file=None,
     icon=['ncicon.ico'],
+)
+
+coll = COLLECT(
+    exe,
+    a.binaries,
+    a.datas,
+    strip=False,
+    upx=True,
+    upx_exclude=[],
+    name='NickherMacro',
 )

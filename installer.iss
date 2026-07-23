@@ -55,7 +55,8 @@ Name: "desktopicon"; Description: "Create a desktop shortcut"; GroupDescription:
 Name: "startupicon"; Description: "Start Nickher Macro when I sign in"; GroupDescription: "Startup:"; Flags: unchecked
 
 [Files]
-Source: "dist\{#AppExe}"; DestDir: "{app}"; Flags: ignoreversion
+; onedir build: ship the exe and its _internal\ folder of DLLs together.
+Source: "dist\NickherMacro\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
 Name: "{autoprograms}\{#AppName}"; Filename: "{app}\{#AppExe}"

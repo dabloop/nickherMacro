@@ -18,7 +18,8 @@ import subprocess
 import sys
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
-EXE = os.path.join(ROOT, "dist", "NickherMacro.exe")
+# onedir build: the exe lives inside dist\NickherMacro\ alongside its DLLs.
+EXE = os.path.join(ROOT, "dist", "NickherMacro", "NickherMacro.exe")
 VERSION_FILE = os.path.join(ROOT, "version.py")
 
 
@@ -47,12 +48,10 @@ def build() -> None:
     if os.path.isdir(build_dir):
         shutil.rmtree(build_dir, ignore_errors=True)
 
-    # dist/ is NOT: it is where the app actually runs, so presets.json and
-    # settings.json accumulate beside the exe. Only remove what we regenerate.
-    for name in ("NickherMacro.exe", "NickherMacro.exe.sha256"):
-        stale = os.path.join(ROOT, "dist", name)
-        if os.path.exists(stale):
-            os.remove(stale)
+    # Remove the previous onedir output so stale DLLs can't linger.
+    onedir = os.path.join(ROOT, "dist", "NickherMacro")
+    if os.path.isdir(onedir):
+        shutil.rmtree(onedir, ignore_errors=True)
 
     print("Building (this takes a minute)...")
     result = subprocess.run(
@@ -129,19 +128,16 @@ def main() -> None:
 
     version = read_version()
     build()
-    exe_digest = write_checksum(EXE)
     installer = build_installer(version)
+    if not installer:
+        sys.exit("The onedir build ships via the installer — Inno Setup is required.")
 
-    assets = [EXE, EXE + ".sha256"]
+    write_checksum(installer)
+    assets = [installer, installer + ".sha256"]
+
     print()
-    print(f"  NickherMacro.exe             {os.path.getsize(EXE)/1e6:6.1f} MB")
-    print(f"    sha256  {exe_digest}")
-    if installer:
-        write_checksum(installer)
-        assets += [installer, installer + ".sha256"]
-        print(f"  {os.path.basename(installer):<28} "
-              f"{os.path.getsize(installer)/1e6:6.1f} MB")
-        print(f"    sha256  {sha256_of(installer)}")
+    print(f"  {os.path.basename(installer):<30} {os.path.getsize(installer)/1e6:6.1f} MB")
+    print(f"    sha256  {sha256_of(installer)}")
 
     quoted = " ".join(f'"{a}"' for a in assets)
     print()
@@ -150,7 +146,7 @@ def main() -> None:
     print(f'  gh release create v{version} {quoted} '
           f'--title "v{version}" --notes "What changed..."')
     print()
-    print("NickherMacro.exe and its .sha256 must both be attached — the updater")
+    print("The installer and its .sha256 must both be attached — the updater")
     print("rejects a release with no checksum rather than installing unverified.")
 
 

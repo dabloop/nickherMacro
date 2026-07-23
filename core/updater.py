@@ -154,32 +154,32 @@ def check(repo: str = GITHUB_REPO, current: str = __version__):
     assets = {a.get("name"): a for a in data.get("assets", []) if isinstance(a, dict)}
     version = str(tag).lstrip("vV")
 
-    exe = assets.get(ASSET_NAME)
-    if not exe:
-        raise UpdateError(f"Release {tag} has no {ASSET_NAME} attached.")
-    exe_sha = assets.get(ASSET_NAME + ".sha256")
-    if not exe_sha:
-        raise UpdateError(
-            f"Release {tag} has no {ASSET_NAME}.sha256 checksum. "
-            "Refusing to install an unverified binary.")
-
-    # The installer asset carries the version in its name, e.g.
-    # NickherMacro-Setup-1.2.3.exe. Its checksum, if published, must be present.
+    # The installer is the required, verified asset. The app is a one-folder
+    # build now, so there is no standalone exe to swap — updates always run the
+    # installer, which replaces the whole program folder atomically.
     setup_name = f"NickherMacro-Setup-{version}.exe"
     setup = assets.get(setup_name)
+    if not setup:
+        raise UpdateError(f"Release {tag} has no installer ({setup_name}) attached.")
     setup_sha = assets.get(setup_name + ".sha256")
-    if setup and not setup_sha:
-        setup = None   # unverifiable installer — fall back to the exe path
+    if not setup_sha:
+        raise UpdateError(
+            f"Release {tag} has no {setup_name}.sha256 checksum. "
+            "Refusing to install an unverified download.")
+
+    # A standalone exe may still be published for older clients; it's optional.
+    exe = assets.get(ASSET_NAME)
+    exe_sha = assets.get(ASSET_NAME + ".sha256")
 
     return UpdateInfo(
         version=version,
         notes=(data.get("body") or "").strip(),
-        exe_url=exe.get("browser_download_url", ""),
-        exe_sha_url=exe_sha.get("browser_download_url", ""),
-        exe_size=int(exe.get("size") or 0),
-        setup_url=setup.get("browser_download_url", "") if setup else None,
-        setup_sha_url=setup_sha.get("browser_download_url", "") if setup else None,
-        setup_size=int(setup.get("size") or 0) if setup else 0,
+        exe_url=exe.get("browser_download_url", "") if exe else "",
+        exe_sha_url=exe_sha.get("browser_download_url", "") if exe_sha else "",
+        exe_size=int(exe.get("size") or 0) if exe else 0,
+        setup_url=setup.get("browser_download_url", ""),
+        setup_sha_url=setup_sha.get("browser_download_url", ""),
+        setup_size=int(setup.get("size") or 0),
     )
 
 
