@@ -281,6 +281,16 @@ class StepTable(QTableWidget):
         self.selectRow(row)
         self.changed.emit()
 
+    def has_moves(self) -> bool:
+        return self.macro.has_moves()
+
+    def remove_moves(self) -> int:
+        removed = self.macro.remove_moves()
+        if removed:
+            self.refresh()
+            self.changed.emit()
+        return removed
+
     def fill_delays(self):
         ms, ok = QInputDialog.getInt(self, "Fill delays",
                                      "Delay after each step (ms):", 100, 0, MAX_MS, 10)

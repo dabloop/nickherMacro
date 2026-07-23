@@ -216,6 +216,30 @@ class MacroModel:
         for n in range(len(self.rows())):
             self.set_delay_ms(n, ms)
 
+    def has_moves(self) -> bool:
+        return any(e.get("t") == ev.MOUSE_MOVE for e in self._events)
+
+    def remove_moves(self) -> int:
+        """
+        Drop every mouse-movement event, leaving clicks, keys, scrolls and
+        waits. The gap a move carried is folded into the next event so the
+        overall timing barely changes. Returns how many were removed.
+        """
+        keep_events, keep_gaps = [], []
+        carried = 0.0
+        removed = 0
+        for e, g in zip(self._events, self._gaps):
+            if e.get("t") == ev.MOUSE_MOVE:
+                carried += g          # preserve the elapsed time it represented
+                removed += 1
+                continue
+            keep_events.append(e)
+            keep_gaps.append(g + carried)
+            carried = 0.0
+        self._events, self._gaps = keep_events, keep_gaps
+        self._invalidate()
+        return removed
+
     # ── structural edits ─────────────────────────────────────────────────────
     def _extract(self, row: Row):
         """Pull a row's events and gaps out of the list."""

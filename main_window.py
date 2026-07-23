@@ -217,7 +217,7 @@ QMessageBox QPushButton:default, QDialog QDialogButtonBox QPushButton:default {
 QPushButton#btnUpdate {
     background:#1f8f3a; color:#ffffff;
     border:1px solid #3fbf5a; border-radius:8px;
-    padding:9px 18px; font-size:13px; font-weight:bold;
+    padding:11px 18px; font-size:14px; font-weight:bold; min-height:22px;
 }
 QPushButton#btnUpdate:hover { background:#28a844; }
 
@@ -703,12 +703,15 @@ class MainWindow(QMainWindow):
         b_fill = _btn("Fill delays", "btnGhost")
         b_fill.setToolTip("Set the same delay after every step")
         b_fill.clicked.connect(self._delay_all_steps)
+        b_nomove = _btn("Remove moves", "btnGhost")
+        b_nomove.setToolTip("Strip all mouse-movement steps, leaving clicks only")
+        b_nomove.clicked.connect(self._remove_moves)
         b_del = _btn("Delete", "btnDanger")
         b_del.clicked.connect(self._steps.delete_selected)
         b_clear = _btn("✕  Clear", "btnDanger")
         b_clear.clicked.connect(self._clear_recording)
 
-        for b in (b_up, b_down, b_key, b_wait, b_text, b_dup, b_fill):
+        for b in (b_up, b_down, b_key, b_wait, b_text, b_dup, b_fill, b_nomove):
             tools.addWidget(b)
         tools.addStretch()
         tools.addWidget(b_del)
@@ -977,7 +980,7 @@ class MainWindow(QMainWindow):
 
         # A big, obvious button that only appears when an update is waiting, so
         # the update is never hidden behind a modal or a low-contrast dialog.
-        self._btn_do_update = _btn("⬇  Update now", "btnUpdate")
+        self._btn_do_update = _btn("Update now", "btnUpdate")
         self._btn_do_update.setVisible(False)
         self._btn_do_update.clicked.connect(self._install_pending_update)
         uc.addWidget(self._btn_do_update)
@@ -1153,6 +1156,13 @@ class MainWindow(QMainWindow):
         ms = self._steps.fill_delays()
         if ms is not False:
             self._toast.show_msg(f"⏱  {ms} ms after every step", "toast")
+
+    def _remove_moves(self):
+        if not self._steps.has_moves():
+            self._toast.show_msg("No mouse movements to remove", "toast")
+            return
+        removed = self._steps.remove_moves()
+        self._toast.show_msg(f"🧹  Removed {removed} movement step(s)", "toastDone")
 
     def _on_events_changed(self):
         count = self._steps.step_count()
@@ -1626,7 +1636,7 @@ class MainWindow(QMainWindow):
         # and jump to the Settings tab so it's right in front of the user.
         self._pending_update = info
         if updater.can_self_update():
-            self._btn_do_update.setText(f"⬇  Update now  (v{info.version})")
+            self._btn_do_update.setText(f"Update now  →  v{info.version}")
             self._btn_do_update.setVisible(True)
             self._update_status.setText(
                 f"Version {info.version} is ready to install.")
