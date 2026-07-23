@@ -96,6 +96,14 @@ class Player:
     def stop(self):
         self.running = False
 
+    def release_all_now(self):
+        """
+        Release every held key/button synchronously, from whatever thread calls
+        this. The panic path uses it so keys come up immediately instead of on
+        the next slice of the playback thread's own loop.
+        """
+        self._release_all()
+
     # ── internals ────────────────────────────────────────────────────────────
     def _safe(self, fn, *args):
         try:

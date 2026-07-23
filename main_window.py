@@ -23,6 +23,7 @@ from core.recorder import Recorder
 from core.player import Player
 from core import events as ev
 from core import presets as preset_store
+from core import paths
 from core.presets import PresetError
 from step_table import StepTable, MAX_MS as MAX_DELAY_MS
 from core import updater
@@ -37,12 +38,8 @@ DEFAULT_PANIC_KEY  = "<esc>"
 EDITOR = object()
 
 def _settings_path() -> str:
-    # Always resolve to the directory of the EXE (or script), never a temp dir
-    if getattr(sys, "frozen", False):
-        base = os.path.dirname(sys.executable)
-    else:
-        base = os.path.dirname(os.path.abspath(__file__))
-    return os.path.join(base, "settings.json")
+    # %APPDATA%\NickherMacro when installed - a program folder is not writable
+    return paths.data_file("settings.json")
 
 def _load_settings() -> dict:
     p = _settings_path()
@@ -301,6 +298,32 @@ def _restyle(widget, obj_name):
     """Swap a widget's objectName and force the stylesheet to re-apply."""
     widget.setObjectName(obj_name)
     widget.setStyleSheet("")
+
+
+def _release_common_keys():
+    """
+    Nuclear key release: send 'up' for every key a macro is likely to have left
+    held. Used by the panic path when the player object may be gone or wedged,
+    so it never relies on tracked state. Releasing a key that wasn't down is
+    harmless, so we can afford to be thorough.
+    """
+    from pynput.keyboard import Controller, Key, KeyCode
+    kb = Controller()
+    keys = [
+        Key.shift, Key.shift_r, Key.ctrl_l, Key.ctrl_r, Key.alt_l, Key.alt_gr,
+        Key.cmd, Key.cmd_r, Key.space, Key.enter, Key.tab, Key.backspace,
+        Key.caps_lock,
+    ]
+    for k in keys:
+        try:
+            kb.release(k)
+        except Exception:
+            pass
+    for code in list(range(ord("a"), ord("z") + 1)) + list(range(ord("0"), ord("9") + 1)):
+        try:
+            kb.release(KeyCode.from_char(chr(code)))
+        except Exception:
+            pass
 
 
 # ─── Bind Button ──────────────────────────────────────────────────────────────
@@ -1096,11 +1119,37 @@ class MainWindow(QMainWindow):
         self._global_listener.start()
 
     def _panic(self):
-        if self._is_looping:
-            self._stop_loop()
+        """
+        The kill switch. Stops everything and force-releases every key it can,
+        no matter how confused the internal state is. This must never be a
+        no-op — it is the last thing standing between the user and a macro that
+        won't stop.
+        """
+        self._hard_stop()
         if self._is_recording:
-            self._toggle_record()
+            try:
+                self._rec.stop()
+            except Exception:
+                pass
+            self._is_recording = False
+            self._btn_record.setText("⏺  Start Recording")
+            _restyle(self._btn_record, "btnRecord")
+            self._set_controls_enabled(True)
+        self._set_badge("IDLE")
         self._toast.show_msg("🛑  Stopped", "toastErr")
+
+    def _hard_stop(self):
+        """Stop playback immediately and make certain no key stays held down."""
+        if self._player:
+            self._player.stop()
+            try:
+                self._player.release_all_now()   # synchronous, on this thread
+            except Exception:
+                pass
+        _release_common_keys()                    # nuclear: unstick anything
+        if self._is_looping:
+            self._reset_loop_ui()
+            self._progress_lbl.setText("")
 
     # ── recording ────────────────────────────────────────────────────────────
     def _toggle_record(self):
@@ -1409,6 +1458,10 @@ class MainWindow(QMainWindow):
     def _stop_loop(self):
         if self._player:
             self._player.stop()
+            try:
+                self._player.release_all_now()
+            except Exception:
+                pass
         self._reset_loop_ui()
         self._set_badge("IDLE")
         self._progress_lbl.setText("")
@@ -1584,25 +1637,34 @@ class MainWindow(QMainWindow):
         self.raise_()
         self.activateWindow()
 
+    def surface_from_anywhere(self):
+        """Called when a second copy was launched — bring this one to the front."""
+        self._restore_window()
+
     def _quit(self):
         self._quitting = True
         self.close()
 
     def closeEvent(self, event):
-        # Closing hides to tray so hotkeys keep working — unless truly quitting
+        # Closing the window always stops any playback first. Leaving a loop
+        # running behind a closed window is exactly the "it kept typing after
+        # I closed it" trap — the window is the only place to stop it.
+        if self._is_looping:
+            self._hard_stop()
+        if self._is_recording:
+            self._rec.stop()
+            self._is_recording = False
+
+        # Hiding to tray keeps only the hotkeys alive, never a running macro.
         if not self._quitting and self._tray and self._chk_tray.isChecked():
             event.ignore()
             self.hide()
             self._tray.showMessage(
                 "Nickher Macro",
-                "Still running — hotkeys stay active. Quit from the tray icon.",
+                "Hotkeys stay active in the tray. Quit from the tray icon.",
                 QSystemTrayIcon.Information, 4000)
             return
 
-        if self._player:
-            self._player.stop()
-        if self._is_recording:
-            self._rec.stop()
         try:
             self._global_listener.stop()
         except Exception:

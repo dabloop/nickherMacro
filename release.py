@@ -66,15 +66,61 @@ def build() -> None:
         sys.exit(f"Build reported success but {EXE} is missing.")
 
 
-def write_checksum() -> str:
+def sha256_of(path: str) -> str:
     digest = hashlib.sha256()
-    with open(EXE, "rb") as handle:
+    with open(path, "rb") as handle:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
-    hex_digest = digest.hexdigest()
-    with open(EXE + ".sha256", "w", encoding="ascii") as handle:
-        handle.write(f"{hex_digest}  NickherMacro.exe\n")
+    return digest.hexdigest()
+
+
+def write_checksum(path: str) -> str:
+    """Write '<digest>  <filename>' next to the file, sha256sum style."""
+    hex_digest = sha256_of(path)
+    with open(path + ".sha256", "w", encoding="ascii") as handle:
+        handle.write(f"{hex_digest}  {os.path.basename(path)}\n")
     return hex_digest
+
+
+def find_iscc():
+    """Locate the Inno Setup compiler, or None if it isn't installed."""
+    candidates = [
+        os.path.join(os.environ.get("LOCALAPPDATA", ""), "Programs",
+                     "Inno Setup 6", "ISCC.exe"),
+        r"C:\Program Files (x86)\Inno Setup 6\ISCC.exe",
+        r"C:\Program Files\Inno Setup 6\ISCC.exe",
+    ]
+    for path in candidates:
+        if path and os.path.exists(path):
+            return path
+    return shutil.which("ISCC.exe")
+
+
+def build_installer(version: str):
+    """Compile the installer. Returns its path, or None if Inno isn't present."""
+    iscc = find_iscc()
+    if not iscc:
+        print("Inno Setup not found — skipping the installer.")
+        print("  winget install --id JRSoftware.InnoSetup")
+        return None
+
+    # Stale installers would otherwise pile up in dist/ across versions
+    for old in os.listdir(os.path.join(ROOT, "dist")):
+        if old.startswith("NickherMacro-Setup-"):
+            os.remove(os.path.join(ROOT, "dist", old))
+
+    print("Compiling installer...")
+    result = subprocess.run(
+        [iscc, f"/DAppVersion={version}", "installer.iss"],
+        cwd=ROOT, stdout=subprocess.DEVNULL,
+    )
+    if result.returncode != 0:
+        sys.exit("Installer compilation failed.")
+
+    path = os.path.join(ROOT, "dist", f"NickherMacro-Setup-{version}.exe")
+    if not os.path.exists(path):
+        sys.exit(f"Inno reported success but {path} is missing.")
+    return path
 
 
 def main() -> None:
@@ -83,20 +129,29 @@ def main() -> None:
 
     version = read_version()
     build()
-    digest = write_checksum()
-    size_mb = os.path.getsize(EXE) / 1e6
+    exe_digest = write_checksum(EXE)
+    installer = build_installer(version)
 
+    assets = [EXE, EXE + ".sha256"]
     print()
-    print(f"  NickherMacro.exe   {size_mb:.1f} MB")
-    print(f"  sha256             {digest}")
+    print(f"  NickherMacro.exe             {os.path.getsize(EXE)/1e6:6.1f} MB")
+    print(f"    sha256  {exe_digest}")
+    if installer:
+        write_checksum(installer)
+        assets += [installer, installer + ".sha256"]
+        print(f"  {os.path.basename(installer):<28} "
+              f"{os.path.getsize(installer)/1e6:6.1f} MB")
+        print(f"    sha256  {sha256_of(installer)}")
+
+    quoted = " ".join(f'"{a}"' for a in assets)
     print()
     print("Publish it:")
-    print(f'  git tag v{version} && git push origin v{version}')
-    print(f'  gh release create v{version} "{EXE}" "{EXE}.sha256" '
+    print(f"  git tag v{version} && git push origin v{version}")
+    print(f'  gh release create v{version} {quoted} '
           f'--title "v{version}" --notes "What changed..."')
     print()
-    print("Both files must be attached — the updater rejects a release with")
-    print("no checksum rather than installing an unverified binary.")
+    print("NickherMacro.exe and its .sha256 must both be attached — the updater")
+    print("rejects a release with no checksum rather than installing unverified.")
 
 
 if __name__ == "__main__":

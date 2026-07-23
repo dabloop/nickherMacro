@@ -17,28 +17,18 @@ disappearing, so the UI can tell the user what went wrong.
 
 import json
 import os
-import sys
 import time
 
 from core import events as ev
+from core import paths
 
 
 class PresetError(Exception):
     """Raised when presets cannot be read from or written to disk."""
 
 
-def _data_dir() -> str:
-    """
-    Directory of the EXE (frozen) or the project root (dev).
-    Never the PyInstaller temp _MEIPASS dir — that is read-only.
-    """
-    if getattr(sys, "frozen", False):
-        return os.path.dirname(sys.executable)
-    return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-
-
 def _path() -> str:
-    return os.path.join(_data_dir(), "presets.json")
+    return paths.data_file("presets.json")
 
 
 # ─── Read ─────────────────────────────────────────────────────────────────────
