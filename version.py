@@ -3,8 +3,9 @@
 __version__ = "1.1.0"
 
 #: GitHub repo the updater checks, as "owner/name".
-#: Set this once you have pushed the project; until then update checks are off.
-GITHUB_REPO = ""
+#: Must stay public — release assets on a private repo need authentication,
+#: and a token shipped inside the exe would be extractable by anyone.
+GITHUB_REPO = "dabloop/nickherMacro"
 
 #: Bump this whenever the presets.json / settings.json layout changes in a way
 #: older builds cannot read, so an update can warn instead of corrupting data.
