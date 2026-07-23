@@ -25,6 +25,8 @@ from core import events as ev
 from core import presets as preset_store
 from core.presets import PresetError
 from step_table import StepTable, MAX_MS as MAX_DELAY_MS
+from core import updater
+from version import __version__
 
 # ─── Hotkey defaults ──────────────────────────────────────────────────────────
 DEFAULT_RECORD_KEY = "<f6>"
@@ -73,6 +75,9 @@ class _Bridge(QObject):
     engine_error  = Signal(str)
     step_update   = Signal(int)
     preset_fired  = Signal(str)
+    update_result = Signal(object, str)   # (UpdateInfo or None, error message)
+    update_ready  = Signal(str, str)      # (downloaded path, error message)
+    update_progress = Signal(int, int)
 
 
 # ─── Stylesheet ────────────────────────────────────────────────────────────────
@@ -491,6 +496,9 @@ class MainWindow(QMainWindow):
         self._bridge.engine_error.connect(self._on_engine_error)
         self._bridge.step_update.connect(self._on_step_update)
         self._bridge.preset_fired.connect(self._trigger_preset)
+        self._bridge.update_result.connect(self._on_update_result)
+        self._bridge.update_ready.connect(self._on_update_ready)
+        self._bridge.update_progress.connect(self._on_update_progress)
 
         self._rec.on_event = lambda e: self._bridge.recorded.emit(e)
         self._rec.on_error = lambda exc: self._bridge.engine_error.emit(str(exc))
@@ -516,6 +524,10 @@ class MainWindow(QMainWindow):
         self._build_tray()
         self._start_global_listener()
         self._refresh_presets()
+
+        updater.cleanup_old_binary()
+        if self._chk_autoupdate.isChecked() and updater.GITHUB_REPO:
+            QTimer.singleShot(2500, lambda: self._check_updates(quiet=True))
 
     # ── UI construction ──────────────────────────────────────────────────────
     def _build_ui(self):
@@ -852,6 +864,29 @@ class MainWindow(QMainWindow):
             "Hotkeys keep working while hidden. Quit from the tray icon's menu.", "hint"))
         box.addWidget(tray_card)
 
+        up_card = _card()
+        uc = QVBoxLayout(up_card)
+        uc.setContentsMargins(18, 16, 18, 16)
+        uc.setSpacing(10)
+        uc.addWidget(_sec("Updates"))
+
+        row = QHBoxLayout()
+        row.addWidget(_lbl(f"Version {__version__}", "info"))
+        row.addStretch()
+        self._btn_update = _btn("Check for updates", "btnGhost")
+        self._btn_update.clicked.connect(lambda: self._check_updates(quiet=False))
+        row.addWidget(self._btn_update)
+        uc.addLayout(row)
+
+        self._update_status = _lbl("", "hint")
+        self._update_status.setWordWrap(True)
+        uc.addWidget(self._update_status)
+
+        self._chk_autoupdate = QCheckBox("Check for updates on startup")
+        self._chk_autoupdate.setChecked(True)
+        uc.addWidget(self._chk_autoupdate)
+        box.addWidget(up_card)
+
         box.addStretch()
         return page
 
@@ -903,6 +938,7 @@ class MainWindow(QMainWindow):
             self._chk_mouse.setChecked(bool(s.get("record_mouse", True)))
             self._chk_moves.setChecked(bool(s.get("record_moves", False)))
             self._chk_tray.setChecked(bool(s.get("tray", True)))
+            self._chk_autoupdate.setChecked(bool(s.get("auto_update_check", True)))
         except (TypeError, ValueError):
             pass  # a hand-edited settings.json shouldn't stop the app opening
 
@@ -911,7 +947,8 @@ class MainWindow(QMainWindow):
             w.valueChanged.connect(self._save_prefs)
         for r in (self._radio_fixed, self._radio_rep):
             r.toggled.connect(self._save_prefs)
-        for c in (self._chk_mouse, self._chk_moves, self._chk_tray):
+        for c in (self._chk_mouse, self._chk_moves, self._chk_tray,
+                  self._chk_autoupdate):
             c.toggled.connect(self._save_prefs)
 
     def _save_prefs(self, *_):
@@ -930,6 +967,7 @@ class MainWindow(QMainWindow):
             "record_mouse":  self._chk_mouse.isChecked(),
             "record_moves":  self._chk_moves.isChecked(),
             "tray":          self._chk_tray.isChecked(),
+            "auto_update_check": self._chk_autoupdate.isChecked(),
             "preset_keys":   dict(self._preset_keys),
         })
 
@@ -1395,6 +1433,111 @@ class MainWindow(QMainWindow):
     def _on_step_update(self, index: int):
         if self._is_looping and self._active == EDITOR:
             self._steps.highlight_event(index)
+
+    # ── updates ──────────────────────────────────────────────────────────────
+    def _check_updates(self, quiet=True):
+        """
+        Ask GitHub whether a newer release exists. Runs off the UI thread;
+        `quiet` suppresses "you're up to date" and error popups for the
+        automatic check on startup.
+        """
+        if getattr(self, "_update_busy", False):
+            return
+        self._update_busy = True
+        self._btn_update.setEnabled(False)
+        self._update_status.setText("Checking…")
+
+        def work():
+            try:
+                info = updater.check()
+                self._bridge.update_result.emit(info, "")
+            except updater.UpdateError as exc:
+                self._bridge.update_result.emit(None, str(exc))
+            except Exception as exc:                      # never kill the thread
+                self._bridge.update_result.emit(None, f"Unexpected error: {exc}")
+
+        self._update_quiet = quiet
+        threading.Thread(target=work, daemon=True).start()
+
+    def _on_update_result(self, info, error):
+        self._update_busy = False
+        self._btn_update.setEnabled(True)
+
+        if error:
+            self._update_status.setText(error)
+            if not self._update_quiet:
+                QMessageBox.warning(self, "Update check failed", error)
+            return
+
+        if info is None:
+            self._update_status.setText(f"Up to date (v{__version__}).")
+            if not self._update_quiet:
+                self._toast.show_msg("✅  You're on the latest version", "toastDone")
+            return
+
+        self._update_status.setText(f"Version {info.version} is available.")
+        notes = f"\n\n{info.notes[:600]}" if info.notes else ""
+        size = f" ({info.size / 1e6:.0f} MB)" if info.size else ""
+        answer = QMessageBox.question(
+            self, "Update available",
+            f"Version {info.version} is available — you have {__version__}.\n"
+            f"Download and install it now?{size}{notes}",
+            QMessageBox.Yes | QMessageBox.No)
+        if answer != QMessageBox.Yes:
+            return
+
+        if not updater.can_self_update():
+            QMessageBox.information(
+                self, "Running from source",
+                "This copy runs from source, so it can't replace itself.\n"
+                "Pull the new version with git instead.")
+            return
+
+        self._start_download(info)
+
+    def _start_download(self, info):
+        self._btn_update.setEnabled(False)
+        self._update_status.setText("Downloading…")
+
+        def work():
+            try:
+                path = updater.download(
+                    info,
+                    progress=lambda done, total:
+                        self._bridge.update_progress.emit(done, total))
+                self._bridge.update_ready.emit(path, "")
+            except updater.UpdateError as exc:
+                self._bridge.update_ready.emit("", str(exc))
+            except Exception as exc:
+                self._bridge.update_ready.emit("", f"Unexpected error: {exc}")
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _on_update_progress(self, done, total):
+        if total:
+            self._update_status.setText(
+                f"Downloading… {done / 1e6:.0f} / {total / 1e6:.0f} MB")
+        else:
+            self._update_status.setText(f"Downloading… {done / 1e6:.0f} MB")
+
+    def _on_update_ready(self, path, error):
+        self._btn_update.setEnabled(True)
+        if error:
+            self._update_status.setText(error)
+            QMessageBox.warning(self, "Update failed", error)
+            return
+
+        self._update_status.setText("Verified. Restarting to install…")
+        try:
+            updater.apply_update(path)
+        except updater.UpdateError as exc:
+            self._update_status.setText(str(exc))
+            QMessageBox.warning(self, "Update failed", str(exc))
+            return
+
+        # The helper waits for this process to exit before swapping the binary
+        self._quitting = True
+        self.close()
 
     # ── system tray ──────────────────────────────────────────────────────────
     def _build_tray(self):
