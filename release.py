@@ -42,10 +42,17 @@ def write_version(new: str) -> None:
 
 
 def build() -> None:
-    for stale in ("build", "dist"):
-        path = os.path.join(ROOT, stale)
-        if os.path.isdir(path):
-            shutil.rmtree(path, ignore_errors=True)
+    # build/ is pure output and is safe to wipe.
+    build_dir = os.path.join(ROOT, "build")
+    if os.path.isdir(build_dir):
+        shutil.rmtree(build_dir, ignore_errors=True)
+
+    # dist/ is NOT: it is where the app actually runs, so presets.json and
+    # settings.json accumulate beside the exe. Only remove what we regenerate.
+    for name in ("NickherMacro.exe", "NickherMacro.exe.sha256"):
+        stale = os.path.join(ROOT, "dist", name)
+        if os.path.exists(stale):
+            os.remove(stale)
 
     print("Building (this takes a minute)...")
     result = subprocess.run(
