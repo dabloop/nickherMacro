@@ -46,15 +46,49 @@ class UpdateError(Exception):
 
 
 class UpdateInfo:
-    def __init__(self, version, notes, url, size, sha_url):
+    """
+    Describes an available release. Carries two possible installation assets:
+
+      * the installer (NickherMacro-Setup-<v>.exe), when present — the reliable
+        path, because Inno Setup handles stopping the running app, replacing
+        files, and relaunching. Hand-swapping a one-file exe is fragile: antivirus
+        can lock a bundled DLL mid-extraction, which surfaces as a cryptic
+        "failed to load DLL" on the next launch.
+      * the raw exe (NickherMacro.exe) — the fallback for a portable copy that
+        was never installed.
+    """
+
+    def __init__(self, version, notes,
+                 exe_url, exe_sha_url, exe_size,
+                 setup_url=None, setup_sha_url=None, setup_size=0):
         self.version = version
         self.notes = notes
-        self.url = url
-        self.size = size
-        self.sha_url = sha_url
+        self.exe_url = exe_url
+        self.exe_sha_url = exe_sha_url
+        self.exe_size = exe_size
+        self.setup_url = setup_url
+        self.setup_sha_url = setup_sha_url
+        self.setup_size = setup_size
+
+    @property
+    def has_installer(self) -> bool:
+        return bool(self.setup_url and self.setup_sha_url)
+
+    # Back-compat: older call sites read .url/.sha_url/.size for the exe asset.
+    @property
+    def url(self):
+        return self.exe_url
+
+    @property
+    def sha_url(self):
+        return self.exe_sha_url
+
+    @property
+    def size(self):
+        return self.exe_size
 
     def __repr__(self):
-        return f"UpdateInfo({self.version!r}, {self.size} bytes)"
+        return f"UpdateInfo({self.version!r}, installer={self.has_installer})"
 
 
 # ─── Version comparison ───────────────────────────────────────────────────────
@@ -118,22 +152,34 @@ def check(repo: str = GITHUB_REPO, current: str = __version__):
         return None
 
     assets = {a.get("name"): a for a in data.get("assets", []) if isinstance(a, dict)}
+    version = str(tag).lstrip("vV")
+
     exe = assets.get(ASSET_NAME)
     if not exe:
         raise UpdateError(f"Release {tag} has no {ASSET_NAME} attached.")
-
-    checksum = assets.get(ASSET_NAME + ".sha256")
-    if not checksum:
+    exe_sha = assets.get(ASSET_NAME + ".sha256")
+    if not exe_sha:
         raise UpdateError(
             f"Release {tag} has no {ASSET_NAME}.sha256 checksum. "
             "Refusing to install an unverified binary.")
 
+    # The installer asset carries the version in its name, e.g.
+    # NickherMacro-Setup-1.2.3.exe. Its checksum, if published, must be present.
+    setup_name = f"NickherMacro-Setup-{version}.exe"
+    setup = assets.get(setup_name)
+    setup_sha = assets.get(setup_name + ".sha256")
+    if setup and not setup_sha:
+        setup = None   # unverifiable installer — fall back to the exe path
+
     return UpdateInfo(
-        version=str(tag).lstrip("vV"),
+        version=version,
         notes=(data.get("body") or "").strip(),
-        url=exe.get("browser_download_url", ""),
-        size=int(exe.get("size") or 0),
-        sha_url=checksum.get("browser_download_url", ""),
+        exe_url=exe.get("browser_download_url", ""),
+        exe_sha_url=exe_sha.get("browser_download_url", ""),
+        exe_size=int(exe.get("size") or 0),
+        setup_url=setup.get("browser_download_url", "") if setup else None,
+        setup_sha_url=setup_sha.get("browser_download_url", "") if setup else None,
+        setup_size=int(setup.get("size") or 0) if setup else 0,
     )
 
 
@@ -148,21 +194,30 @@ def _expected_digest(sha_url: str) -> str:
     return digest.lower()
 
 
-def download(info: UpdateInfo, progress=None) -> str:
+def download(info: UpdateInfo, progress=None, which="auto") -> str:
     """
-    Fetch the new binary to a temp file and verify it. Returns the path.
-    `progress` is called with (bytes_done, bytes_total).
-    """
-    expected = _expected_digest(info.sha_url)
+    Fetch a release asset to a temp file and verify it. Returns the path.
 
-    fd, path = tempfile.mkstemp(prefix="NickherMacro-", suffix=".exe.part")
+    which : "installer" | "exe" | "auto" (installer when available, else exe)
+    progress : called with (bytes_done, bytes_total)
+    """
+    if which == "installer" or (which == "auto" and info.has_installer):
+        url, sha_url, size = info.setup_url, info.setup_sha_url, info.setup_size
+        prefix = "NickherMacro-Setup-"
+    else:
+        url, sha_url, size = info.exe_url, info.exe_sha_url, info.exe_size
+        prefix = "NickherMacro-"
+
+    expected = _expected_digest(sha_url)
+
+    fd, path = tempfile.mkstemp(prefix=prefix, suffix=".exe.part")
     os.close(fd)
 
     digest = hashlib.sha256()
     done = 0
     try:
-        with _open(info.url, accept="application/octet-stream") as response:
-            total = int(response.headers.get("Content-Length") or info.size or 0)
+        with _open(url, accept="application/octet-stream") as response:
+            total = int(response.headers.get("Content-Length") or size or 0)
             while True:
                 chunk = response.read(256 * 1024)
                 if not chunk:
@@ -198,8 +253,28 @@ def download(info: UpdateInfo, progress=None) -> str:
 
 # ─── Install ──────────────────────────────────────────────────────────────────
 def can_self_update() -> bool:
-    """Only a frozen (PyInstaller) build can replace its own binary."""
+    """Only a frozen (PyInstaller) build can update itself."""
     return bool(getattr(sys, "frozen", False))
+
+
+def run_installer(setup_exe: str) -> None:
+    """
+    Launch the downloaded installer and let it do the update. Inno Setup stops
+    the running app, replaces the files, and relaunches — none of the one-file
+    swap fragility. The installer runs silently with a progress window; the app
+    should quit right after this returns so the installer can replace the exe.
+    """
+    if not os.path.exists(setup_exe):
+        raise UpdateError("The installer download went missing.")
+
+    creation = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    try:
+        # /SILENT shows a progress bar but asks nothing; the installer's own
+        # code relaunches the app when it finishes.
+        subprocess.Popen([setup_exe, "/SILENT", "/NORESTART"],
+                         creationflags=creation, close_fds=True)
+    except OSError as exc:
+        raise UpdateError(f"Could not start the installer: {exc}") from exc
 
 
 _SWAP_SCRIPT = """@echo off

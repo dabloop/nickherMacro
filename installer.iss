@@ -79,6 +79,16 @@ begin
   Result := True;
 end;
 
+// After a SILENT install (i.e. the in-app updater ran us), relaunch the app.
+// The interactive install relaunches via the Finished-page checkbox instead.
+procedure CurStepChanged(CurStep: TSetupStep);
+var
+  ResultCode: Integer;
+begin
+  if (CurStep = ssPostInstall) and WizardSilent() then
+    Exec(ExpandConstant('{app}\{#AppExe}'), '', '', SW_SHOW, ewNoWait, ResultCode);
+end;
+
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 var
   ResultCode: Integer;

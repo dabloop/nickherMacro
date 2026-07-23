@@ -1536,33 +1536,42 @@ class MainWindow(QMainWindow):
             return
 
         self._update_status.setText(f"Version {info.version} is available.")
-        notes = f"\n\n{info.notes[:600]}" if info.notes else ""
-        size = f" ({info.size / 1e6:.0f} MB)" if info.size else ""
-        answer = QMessageBox.question(
-            self, "Update available",
-            f"Version {info.version} is available — you have {__version__}.\n"
-            f"Download and install it now?{size}{notes}",
-            QMessageBox.Yes | QMessageBox.No)
-        if answer != QMessageBox.Yes:
-            return
 
         if not updater.can_self_update():
             QMessageBox.information(
                 self, "Running from source",
-                "This copy runs from source, so it can't replace itself.\n"
+                "This copy runs from source, so it can't update itself.\n"
                 "Pull the new version with git instead.")
             return
 
-        self._start_download(info)
+        # Prefer the installer — it is the reliable way to replace a running app.
+        self._update_via_installer = info.has_installer and not paths.is_portable()
+        which = "installer" if self._update_via_installer else "exe"
+        dl_size = info.setup_size if self._update_via_installer else info.exe_size
 
-    def _start_download(self, info):
+        notes = f"\n\n{info.notes[:600]}" if info.notes else ""
+        size = f" ({dl_size / 1e6:.0f} MB)" if dl_size else ""
+        box = QMessageBox(self)
+        box.setWindowTitle("Update available")
+        box.setText(
+            f"Version {info.version} is available — you have {__version__}.{size}{notes}")
+        update_btn = box.addButton("Update now", QMessageBox.AcceptRole)
+        box.addButton("Later", QMessageBox.RejectRole)
+        box.setDefaultButton(update_btn)
+        box.exec()
+        if box.clickedButton() is not update_btn:
+            return
+
+        self._start_download(info, which)
+
+    def _start_download(self, info, which):
         self._btn_update.setEnabled(False)
         self._update_status.setText("Downloading…")
 
         def work():
             try:
                 path = updater.download(
-                    info,
+                    info, which=which,
                     progress=lambda done, total:
                         self._bridge.update_progress.emit(done, total))
                 self._bridge.update_ready.emit(path, "")
@@ -1587,15 +1596,20 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Update failed", error)
             return
 
-        self._update_status.setText("Verified. Restarting to install…")
         try:
-            updater.apply_update(path)
+            if getattr(self, "_update_via_installer", False):
+                self._update_status.setText("Verified. Launching installer…")
+                updater.run_installer(path)
+            else:
+                self._update_status.setText("Verified. Restarting to install…")
+                updater.apply_update(path)
         except updater.UpdateError as exc:
             self._update_status.setText(str(exc))
             QMessageBox.warning(self, "Update failed", str(exc))
             return
 
-        # The helper waits for this process to exit before swapping the binary
+        # Quit so the installer (or swap helper) can replace the running exe.
+        # A running loop must not survive into the relaunched copy.
         self._quitting = True
         self.close()
 
