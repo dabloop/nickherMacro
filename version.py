@@ -1,6 +1,6 @@
 """Single source of truth for the app version."""
 
-__version__ = "1.3.0"
+__version__ = "1.3.1"
 
 #: GitHub repo the updater checks, as "owner/name".
 #: Must stay public — release assets on a private repo need authentication,

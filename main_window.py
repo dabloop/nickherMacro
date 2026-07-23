@@ -197,6 +197,30 @@ QMenu::item { padding:6px 20px; border-radius:5px; }
 QMenu::item:selected { background:#252550; color:#e2e2ff; }
 QMenu::separator { height:1px; background:#252535; margin:4px 8px; }
 
+/* Dialogs (QMessageBox, QInputDialog, QFileDialog).
+   Without this, buttons inherit the generic 'color:#fff, no background' rule
+   and render as white text on a pale dialog — effectively invisible. */
+QMessageBox, QInputDialog { background:#16161e; }
+QMessageBox QLabel, QInputDialog QLabel { color:#e2e2f0; font-size:13px; }
+QMessageBox QPushButton, QInputDialog QPushButton, QDialog QDialogButtonBox QPushButton {
+    background:#2d48cc; color:#ffffff;
+    border:1px solid #4a63e0; border-radius:6px;
+    padding:7px 18px; font-size:12px; font-weight:bold; min-width:88px;
+}
+QMessageBox QPushButton:hover, QInputDialog QPushButton:hover,
+QDialog QDialogButtonBox QPushButton:hover { background:#3d5bff; }
+QMessageBox QPushButton:default, QDialog QDialogButtonBox QPushButton:default {
+    background:#3d5bff; border:1px solid #aabbff;
+}
+
+/* Prominent 'update now' button shown in Settings when a release is waiting */
+QPushButton#btnUpdate {
+    background:#1f8f3a; color:#ffffff;
+    border:1px solid #3fbf5a; border-radius:8px;
+    padding:9px 18px; font-size:13px; font-weight:bold;
+}
+QPushButton#btnUpdate:hover { background:#28a844; }
+
 QPushButton {
     border-radius:8px; font-size:13px; font-weight:bold;
     padding:9px 18px; border:none; color:#fff;
@@ -605,10 +629,11 @@ class MainWindow(QMainWindow):
         # ── Tabs ──
         self._tabs = QTabWidget()
         self._tabs.setDocumentMode(True)
+        self._settings_page = self._build_settings_tab()
         self._tabs.addTab(self._build_macro_tab(),    "Macro")
         self._tabs.addTab(self._build_playback_tab(), "Playback")
         self._tabs.addTab(self._build_presets_tab(),  "Presets")
-        self._tabs.addTab(self._build_settings_tab(), "Settings")
+        self._tabs.addTab(self._settings_page,        "Settings")
         main.addWidget(self._tabs, 1)
 
         # ── Action bar — always visible, whichever tab is open ──
@@ -941,6 +966,13 @@ class MainWindow(QMainWindow):
         self._update_status = _lbl("", "hint")
         self._update_status.setWordWrap(True)
         uc.addWidget(self._update_status)
+
+        # A big, obvious button that only appears when an update is waiting, so
+        # the update is never hidden behind a modal or a low-contrast dialog.
+        self._btn_do_update = _btn("⬇  Update now", "btnUpdate")
+        self._btn_do_update.setVisible(False)
+        self._btn_do_update.clicked.connect(self._install_pending_update)
+        uc.addWidget(self._btn_do_update)
 
         self._chk_autoupdate = QCheckBox("Check for updates on startup")
         self._chk_autoupdate.setChecked(True)
@@ -1580,33 +1612,29 @@ class MainWindow(QMainWindow):
                 self._toast.show_msg("✅  You're on the latest version", "toastDone")
             return
 
-        self._update_status.setText(f"Version {info.version} is available.")
+        # An update is waiting. Don't rely on a modal (it can appear behind the
+        # window or read as low-contrast). Reveal the big green button instead,
+        # and jump to the Settings tab so it's right in front of the user.
+        self._pending_update = info
+        if updater.can_self_update():
+            self._btn_do_update.setText(f"⬇  Update now  (v{info.version})")
+            self._btn_do_update.setVisible(True)
+            self._update_status.setText(
+                f"Version {info.version} is ready to install.")
+            self._tabs.setCurrentWidget(self._settings_page)
+            self._toast.show_msg(f"⬇  Update {info.version} available", "toastLoop", ms=4000)
+        else:
+            self._update_status.setText(
+                f"Version {info.version} is available. Running from source — "
+                "pull it with git.")
 
-        if not updater.can_self_update():
-            QMessageBox.information(
-                self, "Running from source",
-                "This copy runs from source, so it can't update itself.\n"
-                "Pull the new version with git instead.")
+    def _install_pending_update(self):
+        info = getattr(self, "_pending_update", None)
+        if info is None:
             return
-
-        # Prefer the installer — it is the reliable way to replace a running app.
         self._update_via_installer = info.has_installer and not paths.is_portable()
         which = "installer" if self._update_via_installer else "exe"
-        dl_size = info.setup_size if self._update_via_installer else info.exe_size
-
-        notes = f"\n\n{info.notes[:600]}" if info.notes else ""
-        size = f" ({dl_size / 1e6:.0f} MB)" if dl_size else ""
-        box = QMessageBox(self)
-        box.setWindowTitle("Update available")
-        box.setText(
-            f"Version {info.version} is available — you have {__version__}.{size}{notes}")
-        update_btn = box.addButton("Update now", QMessageBox.AcceptRole)
-        box.addButton("Later", QMessageBox.RejectRole)
-        box.setDefaultButton(update_btn)
-        box.exec()
-        if box.clickedButton() is not update_btn:
-            return
-
+        self._btn_do_update.setEnabled(False)
         self._start_download(info, which)
 
     def _start_download(self, info, which):
@@ -1638,6 +1666,7 @@ class MainWindow(QMainWindow):
         self._btn_update.setEnabled(True)
         if error:
             self._update_status.setText(error)
+            self._btn_do_update.setEnabled(True)   # let them try again
             QMessageBox.warning(self, "Update failed", error)
             return
 
@@ -1650,6 +1679,7 @@ class MainWindow(QMainWindow):
                 updater.apply_update(path)
         except updater.UpdateError as exc:
             self._update_status.setText(str(exc))
+            self._btn_do_update.setEnabled(True)
             QMessageBox.warning(self, "Update failed", str(exc))
             return
 
