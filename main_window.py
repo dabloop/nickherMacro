@@ -223,7 +223,7 @@ QPushButton#btnUpdate:hover { background:#28a844; }
 
 QPushButton {
     border-radius:8px; font-size:13px; font-weight:bold;
-    padding:9px 18px; border:none; color:#fff;
+    padding:9px 18px; border:none; color:#fff; min-height:20px;
 }
 QPushButton:disabled { color:#6a6a80; }
 QPushButton#btnRecord       { background:#c0364d; }
@@ -237,12 +237,12 @@ QPushButton#btnLoopOn:hover   { background:#5570ff; }
 QPushButton#btnGhost {
     background:#1e1e2e; color:#c8c8e8;
     border:1px solid #252535; font-weight:normal;
-    padding:5px 12px; font-size:12px;
+    padding:7px 12px; font-size:12px; min-height:18px;
 }
 QPushButton#btnGhost:hover { background:#252540; }
 QPushButton#btnSave        { background:#1a3a1a; color:#60ff80; border:1px solid #2a5a2a; }
 QPushButton#btnSave:hover  { background:#1f4a1f; }
-QPushButton#btnDanger      { background:#3a1818; color:#ff6060; border:1px solid #5a2020; font-size:12px; padding:5px 12px; }
+QPushButton#btnDanger      { background:#3a1818; color:#ff6060; border:1px solid #5a2020; font-size:12px; padding:7px 12px; min-height:18px; }
 QPushButton#btnDanger:hover { background:#4a2020; }
 
 /* Key chips */

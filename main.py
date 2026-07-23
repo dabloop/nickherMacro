@@ -1,9 +1,16 @@
 import sys
 import os
 
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication
 from PySide6.QtGui import QIcon
 from PySide6.QtNetwork import QLocalServer, QLocalSocket
+
+# Handle fractional display scaling (125%, 150%) cleanly. Without PassThrough,
+# Qt rounds the scale factor and control heights can come out a pixel short,
+# which clips button text on some machines.
+QApplication.setHighDpiScaleFactorRoundingPolicy(
+    Qt.HighDpiScaleFactorRoundingPolicy.PassThrough)
 
 from main_window import MainWindow
 
