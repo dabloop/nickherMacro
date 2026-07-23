@@ -87,7 +87,12 @@ def _open(url: str, accept="application/json"):
         return urllib.request.urlopen(request, timeout=TIMEOUT)
     except urllib.error.HTTPError as exc:
         if exc.code == 404:
-            raise UpdateError("No published releases found.") from exc
+            # A private repo looks identical to a missing one over an
+            # unauthenticated request, and that is the likelier mistake.
+            raise UpdateError(
+                "No published releases found. If the repository is private, "
+                "update checks cannot reach it — releases must be public."
+            ) from exc
         if exc.code in (403, 429):
             raise UpdateError("GitHub rate limit reached — try again later.") from exc
         raise UpdateError(f"Server returned {exc.code}.") from exc
