@@ -22,6 +22,7 @@ import pynput.keyboard as pynput_keyboard
 from core.recorder import Recorder
 from core.player import Player
 from core import events as ev
+from core import hotkeys
 from core import presets as preset_store
 from core import paths
 from core.presets import PresetError
@@ -332,11 +333,17 @@ class _BindBridge(QObject):
     captured = Signal(str)
 
 class BindButton(QPushButton):
+    """
+    Captures a key by pressing it. In `chord` mode it captures a combination —
+    hold Shift and press 5 to get 'Shift + 5' — and stores a canonical hotkey
+    string. Otherwise it captures a single key (used by the key-step dialog).
+    """
     bound = Signal(str)
 
-    def __init__(self, initial_raw=DEFAULT_RECORD_KEY, parent=None):
+    def __init__(self, initial_raw=DEFAULT_RECORD_KEY, parent=None, chord=False):
         super().__init__(parent)
         self._raw = initial_raw
+        self._chord = chord
         self._listening = False
         self._bridge = _BindBridge()
         self._bridge.captured.connect(self._finish)
@@ -352,26 +359,49 @@ class BindButton(QPushButton):
         self._raw = raw
         self._update_label()
 
+    def _label_for(self, raw: str) -> str:
+        if not raw:
+            return "Bind…"
+        return hotkeys.pretty(raw) if self._chord else ev.pretty_key(raw)
+
     def _update_label(self):
-        self.setText(f"  {ev.pretty_key(self._raw)}  " if self._raw else "  Bind…  ")
+        self.setText(f"  {self._label_for(self._raw)}  ")
 
     def _start_listen(self):
         if self._listening:
             return
         self._listening = True
         _restyle(self, "bindBtnActive")
-        self.setText("  Press a key…  ")
+        self.setText("  Press a combo…  " if self._chord else "  Press a key…  ")
         win = self.window()
         if hasattr(win, "_binding"):
             win._binding = True
         bridge = self._bridge
-        def _on_press(key):
-            try:
-                bridge.captured.emit(ev.encode_key(key))
-            except ev.EventError:
-                bridge.captured.emit("")
-            return False
-        listener = pynput_keyboard.Listener(on_press=_on_press)
+
+        if self._chord:
+            tracker = hotkeys.ChordTracker()
+
+            def _on_press(key):
+                result = tracker.press(key)   # None while only modifiers are held
+                if result:
+                    bridge.captured.emit(result)
+                    return False
+
+            def _on_release(key):
+                tracker.release(key)
+
+            listener = pynput_keyboard.Listener(
+                on_press=_on_press, on_release=_on_release)
+        else:
+            def _on_press(key):
+                try:
+                    bridge.captured.emit(ev.encode_key(key))
+                except ev.EventError:
+                    bridge.captured.emit("")
+                return False
+
+            listener = pynput_keyboard.Listener(on_press=_on_press)
+
         listener.daemon = True
         listener.start()
 
@@ -527,18 +557,18 @@ class MainWindow(QMainWindow):
         self._rec.on_error = lambda exc: self._bridge.engine_error.emit(str(exc))
 
         s = _load_settings()
-        self._saved_record_key = ev.normalize_key_string(
+        self._saved_record_key = hotkeys.normalize(
             s.get("record_key", DEFAULT_RECORD_KEY), DEFAULT_RECORD_KEY)
-        self._saved_loop_key = ev.normalize_key_string(
+        self._saved_loop_key = hotkeys.normalize(
             s.get("loop_key", DEFAULT_LOOP_KEY), DEFAULT_LOOP_KEY)
-        self._saved_panic_key = ev.normalize_key_string(
+        self._saved_panic_key = hotkeys.normalize(
             s.get("panic_key", DEFAULT_PANIC_KEY), DEFAULT_PANIC_KEY)
 
         raw_keys = s.get("preset_keys", {})
         self._preset_keys = {
-            name: ev.normalize_key_string(key)
+            name: hotkeys.normalize(key)
             for name, key in (raw_keys.items() if isinstance(raw_keys, dict) else [])
-            if ev.normalize_key_string(key)
+            if hotkeys.normalize(key)
         }
 
         self._build_ui()
@@ -831,9 +861,9 @@ class MainWindow(QMainWindow):
             reset.setFixedSize(22, 22)
             reset.setCursor(QCursor(Qt.PointingHandCursor))
             reset.setToolTip("Reset to default")
-            b = BindButton(saved)
-            b.setFixedWidth(104)
-            b.setToolTip(hint)
+            b = BindButton(saved, chord=True)
+            b.setFixedWidth(118)
+            b.setToolTip(hint + " — you can use combos like Shift+5")
             reset.setVisible(saved != default)
 
             def _on_bound(raw, _rst=reset, _dflt=default):
@@ -1100,28 +1130,37 @@ class MainWindow(QMainWindow):
         self._typing = isinstance(new, self._TEXT_INPUTS)
 
     def _start_global_listener(self):
+        self._chord = hotkeys.ChordTracker()
+
         def _on_press(key):
+            # Always track modifier state, even while binding/typing, so the
+            # held-modifier set never gets stuck out of sync.
+            chord = self._chord.press(key)
+            if chord is None:
+                return                       # a modifier went down; nothing to fire
             if self._binding or self._typing:
                 return
-            try:
-                encoded = ev.encode_key(key)
-            except ev.EventError:
-                return
-            if encoded == self._panic_bind.raw():
+
+            # Panic first, and unconditionally — it is the kill switch.
+            if chord == self._panic_bind.raw():
                 self._bridge.panic.emit()
                 return
-            if encoded == self._record_bind.raw():
+            if chord == self._record_bind.raw():
                 self._bridge.record_toggle.emit()
                 return
-            if encoded == self._loop_bind.raw():
+            if chord == self._loop_bind.raw():
                 self._bridge.loop_toggle.emit()
                 return
-            for name, key in self._preset_keys.items():
-                if key == encoded:
+            for name, hk in self._preset_keys.items():
+                if hk == chord:
                     self._bridge.preset_fired.emit(name)
                     return
 
-        self._global_listener = pynput_keyboard.Listener(on_press=_on_press)
+        def _on_release(key):
+            self._chord.release(key)
+
+        self._global_listener = pynput_keyboard.Listener(
+            on_press=_on_press, on_release=_on_release)
         self._global_listener.daemon = True
         self._global_listener.start()
 
@@ -1175,7 +1214,10 @@ class MainWindow(QMainWindow):
 
         self._rec.record_mouse = self._chk_mouse.isChecked()
         self._rec.record_moves = self._chk_moves.isChecked()
-        self._rec.stop_key = self._record_bind.raw()
+        # The recorder self-stops on a single key; use the chord's main key so a
+        # plain F6 still ends recording. The global listener also stops it.
+        _, main_key = hotkeys.split(self._record_bind.raw())
+        self._rec.stop_key = main_key
         self._update_ignore_rect()
         self._rec.start()
 
@@ -1256,9 +1298,9 @@ class MainWindow(QMainWindow):
         row.setContentsMargins(4, 3, 4, 3)
         row.setSpacing(4)
 
-        bind = BindButton(self._preset_keys.get(name, ""))
-        bind.setFixedWidth(116)
-        bind.setToolTip(f"Press this key anywhere to run “{name}”")
+        bind = BindButton(self._preset_keys.get(name, ""), chord=True)
+        bind.setFixedWidth(120)
+        bind.setToolTip(f"Press this combo anywhere to run “{name}” (e.g. Shift+5)")
 
         clear = QPushButton("✕")
         clear.setObjectName("resetBtn")
@@ -1272,13 +1314,13 @@ class MainWindow(QMainWindow):
             if conflict:
                 QMessageBox.warning(
                     self, "Key already used",
-                    f"{ev.pretty_key(raw)} is already bound to {conflict}.")
+                    f"{hotkeys.pretty(raw)} is already bound to {conflict}.")
                 _bind.set_raw(self._preset_keys.get(_name, ""))
                 return
             self._preset_keys[_name] = raw
             _clear.setVisible(True)
             self._save_prefs()
-            self._toast.show_msg(f"⌨  {ev.pretty_key(raw)} → {_name}", "toastDone")
+            self._toast.show_msg(f"⌨  {hotkeys.pretty(raw)} → {_name}", "toastDone")
 
         def _on_clear(_name=name, _bind=bind, _clear=clear):
             self._preset_keys.pop(_name, None)
@@ -1389,13 +1431,16 @@ class MainWindow(QMainWindow):
 
     # ── playback ─────────────────────────────────────────────────────────────
     def _toggle_loop(self):
-        """The Start Loop button / loop hotkey — always runs the editor macro."""
+        """
+        Start Loop button / loop hotkey. If anything is playing — the editor
+        macro OR a preset — this STOPS it. Stop must always mean stop; it must
+        never quietly start a different loop, which is how it can feel like the
+        macro won't quit.
+        """
         if self._is_recording:
             return
         if self._is_looping:
             self._stop_loop()
-            if self._active != EDITOR:
-                self._start_loop(self._steps.get_events(), EDITOR)
             return
         evts = self._steps.get_events()
         if not evts:

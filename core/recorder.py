@@ -87,6 +87,7 @@ class Recorder:
         self._k_listener = self._m_listener = None
         self._release_stuck()
         self._strip_stop_key()
+        self._strip_trailing_window_click()
         self._strip_dangling_click()
 
     # ── internals ────────────────────────────────────────────────────────────
@@ -132,9 +133,8 @@ class Recorder:
 
     def _strip_dangling_click(self):
         """
-        Drop a trailing mouse_down with no matching mouse_up. Stopping via the
-        window's own button is filtered by ignore_rects, but a click that lands
-        elsewhere as recording ends would otherwise replay as a stuck button.
+        Drop a trailing mouse_down with no matching mouse_up, so a click that
+        was still held as recording ended can't replay as a stuck button.
         """
         with self._lock:
             for i in range(len(self.events) - 1, -1, -1):
@@ -148,6 +148,33 @@ class Recorder:
                                if later["t"] == ev.MOUSE_UP):
                         del self.events[i]
                     return
+
+    def _strip_trailing_window_click(self):
+        """
+        Remove exactly the click that landed on our own window to stop the
+        recording. Only the single trailing click is removed, so a real click
+        on the target app — even one that happens to overlap the window — is
+        never lost. This replaces the old approach of ignoring every click
+        inside the window, which silently dropped clicks on apps behind us.
+        """
+        if not self.ignore_rects:
+            return
+        with self._lock:
+            if not self.events:
+                return
+            last = self.events[-1]
+            if last["t"] == ev.MOUSE_UP and self._in_ignored_rect(
+                    last.get("x", -1 << 30), last.get("y", -1 << 30)):
+                self.events.pop()
+                button = last.get("button")
+                for i in range(len(self.events) - 1, -1, -1):
+                    if (self.events[i]["t"] == ev.MOUSE_DOWN
+                            and self.events[i].get("button") == button):
+                        del self.events[i]
+                        break
+            elif last["t"] == ev.MOUSE_DOWN and self._in_ignored_rect(
+                    last.get("x", -1 << 30), last.get("y", -1 << 30)):
+                self.events.pop()
 
     def _in_ignored_rect(self, x, y) -> bool:
         for rx, ry, rw, rh in self.ignore_rects:
@@ -190,28 +217,20 @@ class Recorder:
 
     # ── mouse ────────────────────────────────────────────────────────────────
     def _on_click(self, x, y, button, pressed):
+        # Record every click. The one click that stops recording (on our own
+        # window) is stripped afterwards by _strip_trailing_window_click, so
+        # clicks on the target app are never dropped — even if it sits behind us.
         if not self.recording:
             return
-        name = ev.encode_button(button)
-
-        if pressed:
-            if self._in_ignored_rect(x, y):
-                self._ignored_buttons.add(name)   # skip its release too
-                return
-        elif name in self._ignored_buttons:
-            # Press was ignored; drop the release even if it landed elsewhere
-            self._ignored_buttons.discard(name)
-            return
-
         self._emit(ev.mouse_event(pressed, button, x, y, self._elapsed()))
 
     def _on_scroll(self, x, y, dx, dy):
-        if not self.recording or self._in_ignored_rect(x, y):
+        if not self.recording:
             return
         self._emit(ev.scroll_event(x, y, dx, dy, self._elapsed()))
 
     def _on_move(self, x, y):
-        if not self.recording or self._in_ignored_rect(x, y):
+        if not self.recording:
             return
         now = self._elapsed()
         last_t, last_pos = self._last_move
